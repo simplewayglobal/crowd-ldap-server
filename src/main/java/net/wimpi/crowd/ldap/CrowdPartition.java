@@ -25,6 +25,7 @@ import org.apache.directory.shared.ldap.cursor.ListCursor;
 import org.apache.directory.shared.ldap.cursor.SingletonCursor;
 import org.apache.directory.shared.ldap.entry.DefaultServerEntry;
 import org.apache.directory.shared.ldap.entry.ServerEntry;
+import org.apache.directory.shared.ldap.filter.ExprNode;
 import org.apache.directory.shared.ldap.name.DN;
 import org.apache.directory.shared.ldap.name.RDN;
 import org.apache.directory.shared.ldap.schema.SchemaManager;
@@ -32,9 +33,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.naming.OperationNotSupportedException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -414,22 +413,72 @@ public class CrowdPartition implements Partition {
     }
   }//lookup
 
-  private BaseEntryFilteringCursor findObject(SearchingOperationContext ctx) {
-    DN dn = ctx.getDn();
-    String dnName = dn.getName();
-    ServerEntry se = ctx.getEntry();
+	private BaseEntryFilteringCursor findObject(SearchingOperationContext ctx, ExprNode filter) {
+		DN dn = ctx.getDn();
+		String dnName = dn.getName();
+		ServerEntry se = ctx.getEntry();
+		log.debug("findObject()::dn=" + dnName + "::entry=" + se.toString());
 
-    log.debug("findObject()::dn=" + dnName + "::entry=" + se.toString());
+		//1. Try cache
+		se = m_EntryCache.get(dn.getName());
+		if (se == null) {
+			return new BaseEntryFilteringCursor(new EmptyCursor<ServerEntry>(), ctx);
+		}
 
-    //1. Try cache
-    se = m_EntryCache.get(dn.getName());
-    if (se != null) {
-      return new BaseEntryFilteringCursor(
-          new SingletonCursor<ServerEntry>(se), ctx);
-    }
-    // return an empty result
-    return new BaseEntryFilteringCursor(new EmptyCursor<ServerEntry>(), ctx);
-  }//findObject
+		String filterPreparation = filter.toString();
+		if (filterPreparation.contains("(1.2.840.113556.1.2.102=")) { // memberOf filter is always threaded with AND condition
+			BaseEntryFilteringCursor cursorHelp = filterMemberOf(ctx, se, filterPreparation);
+			if (cursorHelp != null) return cursorHelp;
+			return new BaseEntryFilteringCursor(new EmptyCursor<ServerEntry>(), ctx); // return an empty result
+		}
+		return new BaseEntryFilteringCursor(new SingletonCursor<ServerEntry>(se), ctx);
+	}//findObject
+
+	private BaseEntryFilteringCursor filterMemberOf(SearchingOperationContext ctx, ServerEntry se, String filterPreparation) {
+		HashMap<String, String> parsedFilter = new HashMap<String, String>() {};
+		parsedFilter.put("cn", readValueFromFilter(filterPreparation, "2.5.4.3=")); // cn
+		parsedFilter.put("ou", readValueFromFilter(filterPreparation, "2.5.4.11=")); // organizationalUnitName
+		parsedFilter.put("dc", readValueFromFilter(filterPreparation, "0.9.2342.19200300.100.1.25=")); // domainComponent
+
+		ArrayList<String> member = new ArrayList<String>();
+		String parsedRoles = se.get("memberof").toString();
+
+		StringTokenizer tokenizer = new StringTokenizer(parsedRoles,System.getProperty("line.separator"));
+		while(tokenizer.hasMoreTokens()) {
+			member.add(tokenizer.nextToken());
+		}
+
+		for(String memberOf: member)
+		{
+			HashMap<String,String> eachLineCheck = new HashMap<String, String>();
+			eachLineCheck.put("cn",readValueFromFilter(memberOf,"cn="));
+			eachLineCheck.put("ou",readValueFromFilter(memberOf,"ou="));
+			eachLineCheck.put("dc",readValueFromFilter(memberOf,"dc="));
+			if(eachLineCheck.equals(parsedFilter)) {
+				SingletonCursor<ServerEntry> singletonCursor = new SingletonCursor<ServerEntry>(se);
+				BaseEntryFilteringCursor cursorHelp = new BaseEntryFilteringCursor(singletonCursor, ctx);
+				return cursorHelp;
+			}
+		}
+		return null;
+	}
+
+	private String readValueFromFilter(String string, String identifier) {
+		if (string.length() < identifier.length()) return "";
+		Integer parseFrom = string.lastIndexOf(identifier) + identifier.length(); // start of parse
+		String pomstring = string.substring(parseFrom);
+		Integer parseTo = pomstring.indexOf(",");
+		if(parseTo == -1)
+		{
+			parseTo = pomstring.indexOf(")");
+		}
+		if(parseTo == -1)
+		{
+			parseTo = pomstring.length();
+		}
+		if (pomstring.length() > 0 && parseTo >= 0 && parseTo <= string.length()) return pomstring.substring(0, parseTo);
+		else return "";
+	}
 
   private BaseEntryFilteringCursor findOneLevel(SearchOperationContext ctx) {
     DN dn = ctx.getDn();
@@ -540,7 +589,7 @@ public class CrowdPartition implements Partition {
 
     switch (ctx.getScope()) {
       case OBJECT:
-        return findObject(ctx);
+        return findObject(ctx,ctx.getFilter());
       case ONELEVEL:
         return findOneLevel(ctx);
       case SUBTREE:
