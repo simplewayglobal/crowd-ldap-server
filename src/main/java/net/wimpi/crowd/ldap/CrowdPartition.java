@@ -22,7 +22,6 @@ import org.apache.directory.api.ldap.model.entry.DefaultEntry;
 import org.apache.directory.api.ldap.model.entry.Entry;
 import org.apache.directory.api.ldap.model.exception.LdapException;
 import org.apache.directory.api.ldap.model.exception.LdapInvalidDnException;
-import org.apache.directory.api.ldap.model.filter.ExprNode;
 import org.apache.directory.api.ldap.model.name.Dn;
 import org.apache.directory.api.ldap.model.name.Rdn;
 import org.apache.directory.api.ldap.model.schema.SchemaManager;
@@ -38,12 +37,15 @@ import org.apache.directory.server.core.api.filtering.*;
 import javax.naming.OperationNotSupportedException;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static java.lang.Math.abs;
+
 /**
  * A partition that bridges to the CrowdClient/Crowd REST interface.
  *
@@ -70,7 +72,6 @@ public class CrowdPartition implements Partition {
 
   private List<Entry> m_CrowdOneLevelList;
   private Pattern m_UIDFilter = Pattern.compile("\\(0.9.2342.19200300.100.1.1=([^\\)]*)\\)");
-  private Pattern m_MailFilter = Pattern.compile("\\(0.9.2342.19200300.100.1.3=([^\\)]*)\\)");
   //AD memberOf Emulation
   private boolean m_emulateADmemberOf = false;
   private boolean m_includeNested = false;
@@ -120,6 +121,7 @@ public class CrowdPartition implements Partition {
           m_SchemaManager,
           crowdDn
       );
+
       dcEntry.put(SchemaConstants.OBJECT_CLASS_AT, SchemaConstants.TOP_OC, SchemaConstants.DOMAIN_OC);
       dcEntry.put(SchemaConstants.DC_AT, rdn.getAva().getValue().toString());
       dcEntry.put("description", "Crowd Domain");
@@ -162,9 +164,10 @@ public class CrowdPartition implements Partition {
         e.printStackTrace();
       }
       DefaultEntry usersEntry = new DefaultEntry(
-              m_SchemaManager,
-              usersDn
-      );
+            m_SchemaManager,
+            usersDn
+        );
+
       usersEntry.put(SchemaConstants.OBJECT_CLASS_AT, SchemaConstants.TOP_OC, SchemaConstants.ORGANIZATIONAL_UNIT_OC);
       usersEntry.put(SchemaConstants.OU_AT, "users");
       usersEntry.put("description", "Crowd Users");
@@ -228,8 +231,6 @@ public class CrowdPartition implements Partition {
     this.m_ID = id;
   }//setId
 
-
-
   private boolean isCrowd(Dn dn) {
     return m_CrowdEntry.getDn().equals(dn);
   }//isCrowd
@@ -247,10 +248,10 @@ public class CrowdPartition implements Partition {
     int h = 0;
     for (int i = 0; i < s.length(); i++) {
       h = 31 * h + s.charAt(i);
-      return abs(h);
     }
-    return h;
+    return abs(h);
   }
+
 
   public Entry createUserEntry(Dn dn) {
     Entry userEntry = m_EntryCache.get(dn.getName());
@@ -280,25 +281,25 @@ public class CrowdPartition implements Partition {
         userEntry.put(SchemaConstants.OU_AT, "users");
         userEntry.put(SchemaConstants.UID_NUMBER_AT, ""+hash(user));
 
-		//Note: Emulate AD memberof attribute 
+		//Note: Emulate AD memberof attribute
         if(m_emulateADmemberOf) {
 	        //groups
-    	    List<String> groups = m_CrowdClient.getNamesOfGroupsForUser(user, 0, Integer.MAX_VALUE); 
+    	    List<String> groups = m_CrowdClient.getNamesOfGroupsForUser(user, 0, Integer.MAX_VALUE);
         	for (String g : groups) {
               Dn mdn = new Dn(this.m_SchemaManager, String.format("cn=%s,%s", g, CROWD_GROUPS_DN));
           		userEntry.add("memberof", mdn.getName());
         	}
         	if(m_includeNested) {
         		//groups
-    	    	groups = m_CrowdClient.getNamesOfGroupsForNestedUser(user, 0, Integer.MAX_VALUE); 
+    	    	groups = m_CrowdClient.getNamesOfGroupsForNestedUser(user, 0, Integer.MAX_VALUE);
         		for (String g : groups) {
-                  Dn mdn = new Dn(this.m_SchemaManager, String.format("cn=%s,%s", g, CROWD_GROUPS_DN));
-                  if (!userEntry.contains("memberof", mdn.getName())) {
-                    userEntry.add("memberof", mdn.getName());
-                  }
+                    Dn mdn = new Dn(this.m_SchemaManager, String.format("cn=%s,%s", g, CROWD_GROUPS_DN));
+                    if (!userEntry.contains("memberof", mdn.getName())) {
+                        userEntry.add("memberof", mdn.getName());
+                    }
         		}
         	}
-        }    
+        }
             
 
         log.debug(userEntry.toString());
@@ -330,6 +331,7 @@ public class CrowdPartition implements Partition {
         groupEntry.put(SchemaConstants.CN_AT, g.getName());
         groupEntry.put(SchemaConstants.DESCRIPTION_AT, g.getDescription());
         groupEntry.put(SchemaConstants.GID_NUMBER_AT, ""+hash(g.getName()));
+
 
         for (String u : users) {
           Dn mdn = new Dn(this.m_SchemaManager, String.format("uid=%s,%s", u, CROWD_USERS_DN));
@@ -440,80 +442,28 @@ public class CrowdPartition implements Partition {
     }
     return false;
   }
-  private EntryFilteringCursor findObject(SearchOperationContext ctx,ExprNode filter) {
+
+  private EntryFilteringCursor findObject(SearchOperationContext ctx) {
     Dn dn = ctx.getDn();
-		String dnName = dn.getName();
-		Entry se = ctx.getEntry();
-		//log.debug("findObject()::dn=" + dnName + "::entry=" + se.toString());
-
-		//1. Try cache
-		se = m_EntryCache.get(dn.getName());
-		if (se == null) {
-          return new EntryFilteringCursorImpl(
-                  new SingletonCursor<Entry>(se), ctx, this.m_SchemaManager);
-		}
-
-		String filterPreparation = filter.toString();
-		if (filterPreparation.contains("(1.2.840.113556.1.2.102=")) { // memberOf filter is always threaded with AND condition
-			EntryFilteringCursor cursorHelp = filterMemberOf(ctx, se, filterPreparation);
-			if (cursorHelp != null) return cursorHelp;
-              return new EntryFilteringCursorImpl(new EmptyCursor<Entry>(), ctx, this.m_SchemaManager);
-		}
-         return new EntryFilteringCursorImpl(new EmptyCursor<Entry>(), ctx, this.m_SchemaManager);
-	}//findObject
-
-	private EntryFilteringCursor filterMemberOf(SearchOperationContext ctx, Entry se, String filterPreparation) {
-		HashMap<String, String> parsedFilter = new HashMap<String, String>() {};
-		parsedFilter.put("cn", readValueFromFilter(filterPreparation, "2.5.4.3=")); // cn
-		parsedFilter.put("ou", readValueFromFilter(filterPreparation, "2.5.4.11=")); // organizationalUnitName
-		parsedFilter.put("dc", readValueFromFilter(filterPreparation, "0.9.2342.19200300.100.1.25=")); // domainComponent
-
-		ArrayList<String> member = new ArrayList<String>();
-		String parsedRoles = se.get("memberof").toString();
-
-		StringTokenizer tokenizer = new StringTokenizer(parsedRoles,System.getProperty("line.separator"));
-		while(tokenizer.hasMoreTokens()) {
-			member.add(tokenizer.nextToken());
-		}
-
-		for(String memberOf: member)
-		{
-			HashMap<String,String> eachLineCheck = new HashMap<String, String>();
-			eachLineCheck.put("cn",readValueFromFilter(memberOf,"cn="));
-			eachLineCheck.put("ou",readValueFromFilter(memberOf,"ou="));
-			eachLineCheck.put("dc",readValueFromFilter(memberOf,"dc="));
-			if(eachLineCheck.equals(parsedFilter)) {
-				SingletonCursor<Entry> singletonCursor = new SingletonCursor<Entry>(se);
-				EntryFilteringCursor cursorHelp = new EntryFilteringCursorImpl(singletonCursor, ctx, this.m_SchemaManager);
-				return cursorHelp;
-			}
-		}
-		return null;
-	}
-
-	private String readValueFromFilter(String string, String identifier) {
-		if (string.length() < identifier.length()) return "";
-		Integer parseFrom = string.lastIndexOf(identifier) + identifier.length(); // start of parse
-		String pomstring = string.substring(parseFrom);
-		Integer parseTo = pomstring.indexOf(",");
-		if(parseTo == -1)
-		{
-			parseTo = pomstring.indexOf(")");
-		}
-		if(parseTo == -1)
-		{
-			parseTo = pomstring.length();
-		}
-		if (pomstring.length() > 0 && parseTo >= 0 && parseTo <= string.length()) return pomstring.substring(0, parseTo);
-		else return "";
-	}
-
-  private EntryFilteringCursor findOneLevel(SearchOperationContext ctx, ExprNode filterNode) {
-    Dn dn = ctx.getDn();
+    String dnName = dn.getName();
     Entry se = ctx.getEntry();
+
+//    log.debug("findObject()::dn=" + dnName + "::entry=" + se.toString());
 
     //1. Try cache
     se = m_EntryCache.get(dn.getName());
+    if (se != null) {
+      return new EntryFilteringCursorImpl(
+          new SingletonCursor<Entry>(se), ctx, this.m_SchemaManager);
+    }
+    // return an empty result
+    return new EntryFilteringCursorImpl(new EmptyCursor<Entry>(), ctx, this.m_SchemaManager);
+  }//findObject
+
+  private EntryFilteringCursor findOneLevel(SearchOperationContext ctx) {
+    Dn dn = ctx.getDn();
+    Entry se = ctx.getEntry();
+
     if(se == null) {
         String name = dn.getRdn(0).getNormValue();
         log.debug("Name=" + name);
@@ -521,26 +471,27 @@ public class CrowdPartition implements Partition {
           return new EntryFilteringCursorImpl(new EmptyCursor<Entry>(), ctx, this.m_SchemaManager);
         }
     }
-    log.debug("findOneLevel()::dn=" + dn.getName() + "::entry=" + se.toString() + "::filter=" + ctx.getFilter().toString());
+    //log.debug("findOneLevel()::dn=" + dn.getName() + "::entry=" + se.toString() + "::filter=" + ctx.getFilter().toString());
 
     //1. Organizational Units
     if (dn.getName().equals(m_CrowdEntry.getDn().getName())) {
       return new EntryFilteringCursorImpl(
           new ListCursor<Entry>(m_CrowdOneLevelList),
-          ctx, this.m_SchemaManager
+          ctx,
+          this.m_SchemaManager
       );
     }
     //2. Groups
     if (dn.getName().equals(m_CrowdGroupsEntry.getDn().getName())) {
       //Retrieve Filter
-      if (ctx.getFilter().toString().contains("(2.5.4.0=*)")) {
+      //if (ctx.getFilter().toString().contains("(2.5.4.0=*)")) {
 
         List<Entry> l = new ArrayList<Entry>();
         try {
           TermRestriction<String> groupName = new TermRestriction<String>(GroupTermKeys.NAME, MatchMode.CONTAINS, "");
           List<String> list = m_CrowdClient.searchGroupNames(groupName, 0, Integer.MAX_VALUE);
           for (String gn : list) {
-            Dn gdn = new Dn(String.format("dn=%s,%s", gn, CROWD_GROUPS_DN));
+            Dn gdn = new Dn(this.m_SchemaManager, String.format("uid=%s,%s", gn, CROWD_GROUPS_DN));
             l.add(createGroupEntry(gdn));
           }
         } catch (Exception ex) {
@@ -548,21 +499,25 @@ public class CrowdPartition implements Partition {
         }
         return new EntryFilteringCursorImpl(
             new ListCursor<Entry>(l),
-            ctx, this.m_SchemaManager
+            ctx,
+            this.m_SchemaManager
         );
-      }
+      //}
     }
 
     //3. Users
     if (dn.getName().equals(m_CrowdUsersEntry.getDn().getName())) {
       //Retrieve Filter
       String filter = ctx.getFilter().toString();
-      if (filter.contains("(2.5.4.0=*)") ||  filter.contains("(2.5.4.0=referral)") || filter.contains("(2.5.4.0=posixaccount)")) {
+      //if (filter.contains("(2.5.4.0=*)") ||  filter.contains("(2.5.4.0=referral)")) {
+
+
         Matcher m = m_UIDFilter.matcher(filter);
         String uid = "";
         if (m.find()) {
           uid=m.group(1);
         }
+
         List<Entry> l = new ArrayList<Entry>();
         try {
           SearchRestriction userName = null;
@@ -574,36 +529,34 @@ public class CrowdPartition implements Partition {
               userName = new TermRestriction<String>(UserTermKeys.USERNAME, MatchMode.CONTAINS, uid);
           }
           List<String> list = m_CrowdClient.searchUserNames(userName, 0, Integer.MAX_VALUE);
-          for (String gn : list) {
-            Dn udn = new Dn(String.format("dn=%s,%s", gn, CROWD_USERS_DN));
+          for (String un : list) {
+            Dn udn = new Dn(this.m_SchemaManager, String.format("uid=%s,%s", un, CROWD_USERS_DN));
             l.add(createUserEntry(udn));
           }
         } catch (Exception ex) {
           log.error("findOneLevel()", ex);
         }
-        SingletonCursor<Entry> singletonCursor = new SingletonCursor<Entry>(l.get(0));
-        EntryFilteringCursor cursorHelp = new EntryFilteringCursorImpl(singletonCursor, ctx,this.m_SchemaManager);
-        return cursorHelp;
-      /*  return new BaseEntryFilteringCursor(
-            new ListCursor<ServerEntry>(l),
-            ctx
-        );*/
-      }
+        return new EntryFilteringCursorImpl(
+            new ListCursor<Entry>(l),
+            ctx,
+            this.m_SchemaManager
+        );
+      //}
     }
 
     // return an empty result
-    return new EntryFilteringCursorImpl(new EmptyCursor<Entry>(), ctx,this.m_SchemaManager);
+    return new EntryFilteringCursorImpl(new EmptyCursor<Entry>(), ctx, this.m_SchemaManager);
   }//findOneLevel
 
-  private EntryFilteringCursor findSubTree(SearchOperationContext ctx, ExprNode filter) {
+  private EntryFilteringCursor findSubTree(SearchOperationContext ctx) {
     Dn dn = ctx.getDn();
 
     log.debug("findSubTree()::dn=" + dn.getName());
     //Will only search at one level
-    return findOneLevel(ctx,filter);
+    return findOneLevel(ctx);
   }//findSubTree
 
-  public EntryFilteringCursor search(SearchOperationContext ctx){
+  public EntryFilteringCursor search(SearchOperationContext ctx) {
 
     /*
         -base: the node itself
@@ -616,17 +569,17 @@ public class CrowdPartition implements Partition {
           + ctx.getFilter() + ", scope=" + ctx.getScope() + ")");
     }
 
-      switch (ctx.getScope()) {
+    switch (ctx.getScope()) {
       case OBJECT:
-        return findObject(ctx, ctx.getFilter());
+        return findObject(ctx);
       case ONELEVEL:
-        return findOneLevel(ctx, ctx.getFilter());
+        return findOneLevel(ctx);
       case SUBTREE:
-        return findSubTree(ctx, ctx.getFilter());
+        return findSubTree(ctx);
       default:
         // return an empty result
         return new EntryFilteringCursorImpl(new EmptyCursor<Entry>(), ctx, this.m_SchemaManager);
-      }
+    }
   }//search
 
   public void unbind(UnbindOperationContext opContext) {
@@ -635,10 +588,12 @@ public class CrowdPartition implements Partition {
 
   @Override
   public void dumpIndex(OutputStream outputStream, String s) throws IOException {
+
   }
 
   @Override
   public void setCacheService(CacheService cacheService) {
+
   }
 
   @Override
@@ -651,41 +606,42 @@ public class CrowdPartition implements Partition {
 
   }
 
+
   // The following methods are not supported by this partition, because it is
   // readonly.
 
   public void add(AddOperationContext opContext)
       throws LdapException {
-       throw new LdapException(
+    throw new LdapException(
         MODIFICATION_NOT_ALLOWED_MSG);
   }
 
   public Entry delete(DeleteOperationContext opContext)
       throws LdapException {
-        throw new LdapException(
+    throw new LdapException(
         MODIFICATION_NOT_ALLOWED_MSG);
   }
 
   public void modify(ModifyOperationContext ctx)
-     throws LdapException {
-      throw new LdapException(
+      throws LdapException {
+    throw new LdapException(
         MODIFICATION_NOT_ALLOWED_MSG);
   }
 
   public void move(MoveOperationContext opContext)
-          throws LdapException {
+      throws LdapException {
     throw new LdapException(
         MODIFICATION_NOT_ALLOWED_MSG);
   }
 
   public void rename(RenameOperationContext opContext)
-          throws LdapException {
+      throws LdapException {
     throw new LdapException(
         MODIFICATION_NOT_ALLOWED_MSG);
   }//rename
 
   public void moveAndRename(MoveAndRenameOperationContext opContext)
-          throws LdapException {
+      throws LdapException {
     throw new LdapException(
         MODIFICATION_NOT_ALLOWED_MSG);
   }//moveAndRename
