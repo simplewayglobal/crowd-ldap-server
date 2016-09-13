@@ -2,12 +2,14 @@ package net.wimpi.crowd.ldap;
 
 import com.atlassian.crowd.model.user.User;
 import com.atlassian.crowd.service.client.CrowdClient;
-import org.apache.directory.server.core.LdapPrincipal;
 import org.apache.directory.server.core.authn.AbstractAuthenticator;
-import org.apache.directory.server.core.interceptor.context.BindOperationContext;
-import org.apache.directory.shared.ldap.constants.AuthenticationLevel;
+import org.apache.directory.api.ldap.model.constants.AuthenticationLevel;
+import org.apache.directory.server.core.api.DirectoryService;
+import org.apache.directory.server.core.api.LdapPrincipal;
+import org.apache.directory.server.core.api.interceptor.context.BindOperationContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 
 import java.text.MessageFormat;import java.util.ResourceBundle;
 
@@ -24,17 +26,20 @@ public class CrowdAuthenticator extends AbstractAuthenticator {
       ResourceBundle.getBundle("net.wimpi.crowd.ldap.strings");
 
   private CrowdClient m_CrowdClient;
+  private DirectoryService service;
 
-  public CrowdAuthenticator(CrowdClient client) {
-    super("simple");
+  public CrowdAuthenticator(CrowdClient client, DirectoryService service) {
+    super(AuthenticationLevel.SIMPLE);
     m_CrowdClient = client;
+    this.service = service;
   }//constructor
 
   public LdapPrincipal authenticate(BindOperationContext ctx) throws Exception {
-    String user = ctx.getDn().getRdn(2).getNormValue();
+    String user = ctx.getDn().getRdn(0).getNormValue();
     String pass = new String(ctx.getCredentials(),"utf-8");
-
-    try {
+    User u = m_CrowdClient.authenticateUser(user, pass);
+    return new LdapPrincipal(this.service.getSchemaManager(), ctx.getDn(), AuthenticationLevel.SIMPLE);
+   /* try {
       User u = m_CrowdClient.authenticateUser(user, pass);
       if(u == null) {
         log.debug(c_ResourceBundle.getString("crowdauthenticator.authentication.failed") + "()::Authentication failed");
@@ -46,7 +51,7 @@ public class CrowdAuthenticator extends AbstractAuthenticator {
     } catch (Exception ex) {
       log.debug(c_ResourceBundle.getString("crowdauthenticator.authentication.failed") + "()::Authentication failed: " + ex );
       throw new javax.naming.NamingException("Unable to perform authentication: " + ex);
-    }
+    }*/
   }//authenticate
 
 }//class CrowdAuthenticator
