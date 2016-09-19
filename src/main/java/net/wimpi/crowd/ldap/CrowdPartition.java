@@ -75,6 +75,11 @@ public class CrowdPartition implements Partition {
 
   private CrowdClient m_CrowdClient;
 
+  private String m_gid_cn;
+  private String m_gid_ou;
+  private String m_gid_dc;
+  private Integer m_gid;
+
   private List<Entry> m_CrowdOneLevelList;
   private Pattern m_UIDFilter = Pattern.compile("\\(0.9.2342.19200300.100.1.1=([^\\)]*)\\)");
   private Pattern uidFilter = Pattern.compile("\\(uid=([^\\)]*)\\)");
@@ -89,12 +94,16 @@ public class CrowdPartition implements Partition {
     m_Initialized = new AtomicBoolean(false);
   }//constructor
 
-  public CrowdPartition(CrowdClient client, boolean emulateADMemberOf, boolean includeNested) {
+  public CrowdPartition(CrowdClient client, boolean emulateADMemberOf, boolean includeNested,String mgidcn,String mgiddc, String mgidou,Integer mgid) {
     m_CrowdClient = client;
     m_EntryCache = new LRUCacheMap<String, Entry>(300);
     m_Initialized = new AtomicBoolean(false);
     m_emulateADmemberOf = emulateADMemberOf;
     m_includeNested = includeNested;
+    m_gid_cn = mgidcn;
+    m_gid_dc = mgiddc;
+    m_gid_ou = mgidou;
+    m_gid = mgid;
   }//constructor
 
   public void initialize() {
@@ -295,7 +304,10 @@ public class CrowdPartition implements Partition {
         userEntry.put(SchemaConstants.SN_AT, u.getLastName());
         userEntry.put(SchemaConstants.OU_AT, "users");
         userEntry.put(SchemaConstants.UID_NUMBER_AT, uu.getValue("uidNumber"));
-        userEntry.put(SchemaConstants.GID_NUMBER_AT, uu.getValue("gidNumber"));
+
+        userEntry.put(SchemaConstants.HOME_DIRECTORY_AT, "/home/" + u.getDisplayName() + "/");
+        userEntry.put(SchemaConstants.LOGIN_SHELL_AT,"/bin/bash/");
+        userEntry.put(SchemaConstants.GECOS_AT,"crowd user");
 
 
 		//Note: Emulate AD memberof attribute
@@ -315,7 +327,34 @@ public class CrowdPartition implements Partition {
                         userEntry.add("memberof", mdn.getName());
                     }
         		}
-        	}
+            }
+        }
+        if (uu.getValue("gidNumber") != null) {
+          userEntry.put(SchemaConstants.GID_NUMBER_AT, uu.getValue("gidNumber"));
+        } else {
+          // try to get gidNumber from memberOf attributes
+          HashMap<String, String> selectedGroup = new HashMap<String, String>();
+          selectedGroup.put("cn",m_gid_cn);
+          selectedGroup.put("dc",m_gid_dc);
+          selectedGroup.put("ou",m_gid_ou);
+
+          ArrayList<String> member = new ArrayList<String>();
+          String parsedRoles = userEntry.get("memberof").toString();
+
+          StringTokenizer tokenizer = new StringTokenizer(parsedRoles, System.getProperty("line.separator"));
+          while (tokenizer.hasMoreTokens()) {
+            member.add(tokenizer.nextToken());
+          }
+
+          for (String memberOf : member) {
+            HashMap<String, String> eachLineCheck = new HashMap<String, String>();
+            eachLineCheck.put("cn", readValueFromFilter(memberOf, "cn="));
+            eachLineCheck.put("dc", readValueFromFilter(memberOf, "dc="));
+            eachLineCheck.put("ou", readValueFromFilter(memberOf, "ou="));
+            if (eachLineCheck.equals(selectedGroup)) {
+              userEntry.put(SchemaConstants.GID_NUMBER_AT, String.valueOf(m_gid));
+            }
+          }
         }
             
 
@@ -572,6 +611,8 @@ public class CrowdPartition implements Partition {
     }
 
     //3. Users
+    String pom = dn.getName();
+    String pom2 = m_CrowdUsersEntry.getDn().getName();
     if (dn.getName().equals(m_CrowdUsersEntry.getDn().getName())) {
       //Retrieve Filter
       String filter = ctx.getFilter().toString();

@@ -88,6 +88,11 @@ public class CrowdLDAPServer {
   private boolean m_emulateADmemberOf = false;
   private boolean m_includeNested = false;
 
+  private String m_gid_cn;
+  private String m_gid_ou;
+  private String m_gid_dc;
+  private Integer m_gid;
+
   private File workDir = null;
  
   /**
@@ -106,6 +111,11 @@ public class CrowdLDAPServer {
       m_ServerConfig = serverConfig;
       m_emulateADmemberOf = Boolean.parseBoolean(m_ServerConfig.getProperty(CONFIG_KEY_EMULATE_MEMBEROF, "false"));
 	  m_includeNested = Boolean.parseBoolean(m_ServerConfig.getProperty(CONFIG_KEY_INCLUDE_NESTED, "false"));
+
+      m_gid = Integer.parseInt((m_ServerConfig.getProperty(MEMBER_OF_GID,"false")));
+      m_gid_cn = m_ServerConfig.getProperty(MEMBER_OF_GID_CN,"false");
+      m_gid_dc = m_ServerConfig.getProperty(MEMBER_OF_GID_DC,"false");
+      m_gid_ou = m_ServerConfig.getProperty(MEMBER_OF_GID_OU,"false");
 
       log.debug(c_ResourceBundle.getString("loading.configuration"));
       m_CrowdConfig = new Properties();
@@ -164,6 +174,9 @@ public class CrowdLDAPServer {
         ArrayList<String> filenames = new ArrayList<String>();
         filenames.add("m-oid=1.3.6.1.1.1.1.0");
         filenames.add("m-oid=1.3.6.1.1.1.1.1");
+        filenames.add("m-oid=1.3.6.1.1.1.1.2");
+        filenames.add("m-oid=1.3.6.1.1.1.1.3");
+        filenames.add("m-oid=1.3.6.1.1.1.1.4");
 
 
         for (String name : filenames) {
@@ -347,7 +360,7 @@ public class CrowdLDAPServer {
      */
     private Partition addCrowdPartition(String partitionId, String partitionDn) throws Exception {
         // Create a new partition named 'foo'.
-        CrowdPartition partition = new CrowdPartition(m_CrowdClient, m_emulateADmemberOf, m_includeNested);
+        CrowdPartition partition = new CrowdPartition(m_CrowdClient, m_emulateADmemberOf, m_includeNested,m_gid_cn,m_gid_dc,m_gid_ou,m_gid);
         partition.setId(partitionId);
         partition.setSuffix(partitionDn);
         partition.setSchemaManager(service.getSchemaManager());
@@ -407,6 +420,11 @@ public class CrowdLDAPServer {
   private static final String CONFIG_KEY_CERTIFICATEPASSWD = "ssl.certificate.password";
   
   private static final String CONFIG_KEY_EMULATE_MEMBEROF = "emulate.ad.memberof";  
-  private static final String CONFIG_KEY_INCLUDE_NESTED = "emulate.ad.include.nested";  
+  private static final String CONFIG_KEY_INCLUDE_NESTED = "emulate.ad.include.nested";
+
+  private static final String MEMBER_OF_GID_CN = "map.member.cn";
+  private static final String MEMBER_OF_GID_OU = "map.member.ou";
+  private static final String MEMBER_OF_GID_DC = "map.member.dc";
+  private static final String MEMBER_OF_GID = "map.member.gid";
 
 }//class CrowdLDAPServer
